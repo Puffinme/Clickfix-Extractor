@@ -164,7 +164,7 @@ File (c2_results.txt):
 
 ## NOTES
 
-- The script makes actual HTTP requests to the target domains
+- The script makes actual HTTP requests to the target domains and stores the response in memory only
 - SSL certificate verification is disabled (verify=False)
 - URLs are defanged by default for safe handling
 - The script handles HTML entity decoding and escape sequences
