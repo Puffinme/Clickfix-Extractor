@@ -172,7 +172,7 @@ File (c2_results.txt):
 
 ## AUTHOR
 
-Based on SocGholish analyzer script (sganalyzerv2.py)
+Lucas Linkowski
 
 ## VERSION
 
