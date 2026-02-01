@@ -80,6 +80,46 @@ PATTERNS = {
     'webclient_downloadfile': r'Net\.WebClient[^\n]*?\.DownloadFile\s*\(\s*[\'\"](https?:\/\/[^\s\"\'\)\]]+)[\'\"]',
     # WebRequest.Create
     'webrequest': r'\[?(?:System\.)?Net\.WebRequest\]?::Create\s*\(\s*[\'\"](https?:\/\/[^\s\"\'\)\]]+)[\'\"]',
+
+    # Enhanced PowerShell download patterns
+    'ps_irm_pipe_iex': r'irm\s+["\']?(https?://[^"\'\)\s]+)["\']?\s*\|\s*iex',
+    'ps_curl_pipe_iex': r'curl\s+["\']?(https?://[^"\'\)\s]+)["\']?\s*\|\s*iex',
+    'ps_wget_pipe_iex': r'wget\s+["\']?(https?://[^"\'\)\s]+)["\']?\s*\|\s*iex',
+    'ps_iwr_outfile': r'(?:iwr|Invoke-WebRequest)\s+["\']?(https?://[^"\'\)\s]+)["\']?\s+-OutFile\s+[^\s;"\']+',
+    'ps_image_download': r'Invoke-(?:WebRequest|RestMethod)\s+[^\n]*?["\']?(https?://[^\s"\']+\.(?:jpg|jpeg|png|gif|bmp|webp))["\']?[^\n]*-OutFile',
+
+    # Hex-encoded IP patterns
+    'mshta_hex_ip': r'mshta\s+["\']?((?:https?://)?(?:0x[0-9a-fA-F]+\.){3}0x[0-9a-fA-F]+[^\s"\'\)]*)',
+    'hex_ip_url': r'(https?://(?:0x[0-9a-fA-F]{1,2}\.){3}0x[0-9a-fA-F]{1,2}[^\s"\'\)\]]*)',
+    'decimal_ip': r'(https?://\d{8,10}(?::\d+)?[^\s"\'\)\]]*)',
+    'octal_ip': r'(https?://(?:0[0-7]{1,3}\.){3}0[0-7]{1,3}(?::\d+)?[^\s"\'\)\]]*)',
+
+    # macOS terminal attack patterns
+    'curl_bash_url': r'curl\s+(?:-[a-zA-Z]+\s+)*["\']?(https?://[^\s"\']+)["\']?\s*\|\s*(?:ba)?sh',
+    'wget_bash_url': r'wget\s+["\']?(https?://[^\s"\']+)["\']?\s*\|\s*(?:ba)?sh',
+    'osascript_url': r'osascript\s+-e[^\n]*["\']?(https?://[^\s"\']+)["\']?',
+
+    # WinHttp/VBScript patterns
+    'vbs_open_get_url': r'\.Open\s+["\']GET["\'][^;]*?["\'](https?://[^"\'\)\s]+)["\']',
+    'wscript_vbs_url': r'wscript\s+//E:VBScript[^\n]*["\'](https?://[^\s"\']+)["\']',
+
+    # Steganography/image payload patterns
+    'ps_image_extract_url': r'(?:iwr|Invoke-WebRequest|curl|wget)[^\n]*["\']?(https?://[^\s"\']+\.(?:jpg|jpeg|png|gif|bmp|webp))["\']?',
+    'ps_bitmap_url': r'New-Object\s+System\.Drawing\.Bitmap[^\n]*["\']?(https?://[^\s"\']+)["\']?',
+    'ps_downloadfile_image_url': r'DownloadFile\s*\(\s*["\']?(https?://[^\s"\']+\.(?:jpg|jpeg|png|gif|bmp|webp))["\']?',
+
+    # Extended PowerShell command patterns
+    'ps_hidden': r'powershell(?:\.exe)?\s+-w\s+hidden[^\n]*["\']?(https?://[^\s"\']+)["\']?',
+    'ps_noprofile': r'powershell(?:\.exe)?\s+-noprofile[^\n]*["\']?(https?://[^\s"\']+)["\']?',
+    'ps_bypass': r'powershell(?:\.exe)?\s+-ExecutionPolicy\s+[Bb]ypass[^\n]*["\']?(https?://[^\s"\']+)["\']?',
+    'ps_cmd_start': r'cmd\s+/c\s+start\s+/min\s+powershell[^\n]*["\']?(https?://[^\s"\']+)["\']?',
+    'ps_webclient_var': r'\$\w+\s*=\s*New-Object\s+(?:System\.)?Net\.WebClient;\s*\$\w+\.Download(?:String|File)\s*\(\s*["\']?(https?://[^\s"\']+)["\']?',
+    'ps_env_temp': r'-OutFile\s+\$env:Temp[^\n]*["\']?(https?://[^\s"\']+)["\']?',
+
+    # JavaScript embedded command patterns
+    'js_const_cmd': r'const\s+(?:command|cmd|text)\s*=\s*["\'\`][^"\'\`]*?(https?://[^\s"\'\`]+)',
+    'js_var_cmd': r'var\s+(?:command|cmd|text)\s*=\s*["\'\`][^"\'\`]*?(https?://[^\s"\'\`]+)',
+    'js_let_cmd': r'let\s+(?:command|cmd|text)\s*=\s*["\'\`][^"\'\`]*?(https?://[^\s"\'\`]+)',
 }
 
 # command extraction
@@ -88,6 +128,9 @@ COMMAND_PATTERNS = {
     'mshta_full': r'(mshta\s+[^\n\r\<\>\"\'\;]{10,})',
     'powershell_full': r'(powershell[^\n\r\<\>\"\'\;]{20,})',
     'cmd_full': r'(cmd\s*[\/\\][^\n\r\<\>\"\'\;]{20,})',
+    'curl_bash_full': r'(curl\s+[^\|]+\|\s*(?:ba)?sh)',
+    'wget_bash_full': r'(wget\s+[^\|]+\|\s*(?:ba)?sh)',
+    'unc_path': r'(\\\\[^\s"\'<>\)\(]+\\[^\s"\'<>\)\(]+\.(?:ps1|bat|cmd|hta))',
 }
 
 def is_valid_c2_url(url):
@@ -277,9 +320,36 @@ def process_single_target(target, verbose=False):
     
     return results
 
-def process_file(filepath, verbose=False):
-    """Process a file containing list of domains/URLs"""
+def _print_result(r, defang=True, show_commands=True):
+    """Print one C2 result to console (Source, C2 Domain, C2 URL, Commands)."""
+    c2_display = defang_url(r['c2_url']) if defang else r['c2_url']
+    domain_display = defang_url(r['c2_domain']) if defang else r['c2_domain']
+    print(f"  Source: {r['source']}")
+    print(f"  C2 Domain: {domain_display}")
+    print(f"  C2 URL: {c2_display}")
+    if show_commands and r['commands']:
+        print("  Commands:")
+        for cmd in r['commands']:
+            display_cmd = cmd[:200] + "..." if len(cmd) > 200 else cmd
+            print(f"    {display_cmd}")
+
+
+def _format_source_block(r, defang=True):
+    """Format one result as Source / C2 / Command block for file output."""
+    c2_display = defang_url(r['c2_url']) if defang else r['c2_url']
+    lines = ["Source: " + r['source'], "C2: " + c2_display]
+    if r.get('commands'):
+        cmd_text = " | ".join(c[:500] + ("..." if len(c) > 500 else "") for c in r['commands'])
+        lines.append("Command: " + cmd_text)
+    else:
+        lines.append("Command: ")
+    return "\n".join(lines) + "\n---\n"
+
+
+def process_file(filepath, verbose=False, defang=True, show_commands=True, c2only=False, c2only_source=False, output_file=None, unique=False):
+    """Process a file containing list of domains/URLs. Prints each C2 finding to console as found. When c2only or c2only_source=True, only output lines for targets where C2 was found. When output_file is set, write to file as found. When c2only_source=True, file output is Source/C2/Command blocks."""
     all_results = []
+    only_c2 = c2only or c2only_source
     
     if not os.path.exists(filepath):
         print(f"[!] Error: File '{filepath}' not found")
@@ -290,29 +360,61 @@ def process_file(filepath, verbose=False):
     
     print(f"[*] Processing {len(targets)} target(s) from {filepath}")
     
-    for i, target in enumerate(targets, 1):
-        if verbose:
-            print(f"\n[{i}/{len(targets)}] Processing: {target}")
-        else:
-            print(f"[{i}/{len(targets)}] {target}", end=" ... ")
-        
-        results = process_single_target(target, verbose=verbose)
-        
-        if not verbose:
+    out_f = None
+    written_urls = set()
+    if output_file:
+        out_f = open(output_file, 'w')
+    
+    try:
+        for i, target in enumerate(targets, 1):
+            if not only_c2:
+                if verbose:
+                    print(f"\n[{i}/{len(targets)}] Processing: {target}")
+                else:
+                    print(f"[{i}/{len(targets)}] {target}", end=" ... ")
+            
+            results = process_single_target(target, verbose=verbose)
+            
             if results:
-                print(f"found {len(results)} C2(s)")
+                if out_f:
+                    for r in results:
+                        u = r['c2_url']
+                        if not unique or u not in written_urls:
+                            if unique:
+                                written_urls.add(u)
+                            if c2only_source:
+                                out_f.write(_format_source_block(r, defang=defang))
+                            else:
+                                out_f.write(u + '\n')
+                            out_f.flush()
+                if not verbose:
+                    if not only_c2:
+                        print(f"found {len(results)} C2(s)")
+                    else:
+                        print(f"[{i}/{len(targets)}] {target}  found {len(results)} C2(s)")
+                    for r in results:
+                        _print_result(r, defang=defang, show_commands=show_commands)
+                else:
+                    if only_c2:
+                        print(f"[{i}/{len(targets)}] {target}  found {len(results)} C2(s)")
+                    for r in results:
+                        _print_result(r, defang=defang, show_commands=show_commands)
             else:
-                print("no C2 found")
-        
-        all_results.extend(results)
+                if not only_c2:
+                    if not verbose:
+                        print("no C2 found")
+            
+            all_results.extend(results)
+    finally:
+        if out_f:
+            out_f.close()
     
     return all_results
 
-def output_results(results, unique=False, output_file=None, defang=True, show_commands=True):
-    """Output results to stdout and optionally to file"""
+def output_results(results, unique=False, output_file=None, defang=True, show_commands=True, print_console=True, file_written_incrementally=None):
+    """Output results to stdout and optionally to file. When print_console=False (e.g. list mode already printed), only write file and summary. When file_written_incrementally is set, skip file write and only print summary for that path."""
     
-    if unique:
-        # Deduplicate by C2 URL
+    if unique and not file_written_incrementally:
         seen_urls = set()
         unique_results = []
         for r in results:
@@ -320,43 +422,42 @@ def output_results(results, unique=False, output_file=None, defang=True, show_co
                 seen_urls.add(r['c2_url'])
                 unique_results.append(r)
         results = unique_results
-        print(f"\n[*] Unique C2s: {len(results)}")
+        if print_console:
+            print(f"\n[*] Unique C2s: {len(results)}")
     
     if not results:
         print("\n[!] No ClickFix C2 indicators found")
         return
     
-    print("\n" + "=" * 70)
-    print("CLICKFIX C2 EXTRACTION RESULTS")
-    print("=" * 70)
+    output_lines = [r['c2_url'] for r in results]
     
-    output_lines = []
+    if print_console:
+        print("\n" + "=" * 70)
+        print("CLICKFIX C2 EXTRACTION RESULTS")
+        print("=" * 70)
+        for r in results:
+            c2_display = defang_url(r['c2_url']) if defang else r['c2_url']
+            domain_display = defang_url(r['c2_domain']) if defang else r['c2_domain']
+            print(f"\nSource: {r['source']}")
+            print(f"C2 Domain: {domain_display}")
+            print(f"C2 URL: {c2_display}")
+            if show_commands and r['commands']:
+                print("Commands:")
+                for cmd in r['commands']:
+                    display_cmd = cmd[:200] + "..." if len(cmd) > 200 else cmd
+                    print(f"  {display_cmd}")
+        print("\n" + "=" * 70)
     
-    for r in results:
-        c2_display = defang_url(r['c2_url']) if defang else r['c2_url']
-        domain_display = defang_url(r['c2_domain']) if defang else r['c2_domain']
-        
-        print(f"\nSource: {r['source']}")
-        print(f"C2 Domain: {domain_display}")
-        print(f"C2 URL: {c2_display}")
-        
-        # For file output, just the C2 URL (or domain)
-        output_lines.append(r['c2_url'])
-        
-        if show_commands and r['commands']:
-            print("Commands:")
-            for cmd in r['commands']:
-                # Truncate very long commands for display
-                display_cmd = cmd[:200] + "..." if len(cmd) > 200 else cmd
-                print(f"  {display_cmd}")
-    
-    print("\n" + "=" * 70)
-    
-    if output_file:
+    if output_file and not file_written_incrementally:
         with open(output_file, 'w') as f:
             for line in output_lines:
                 f.write(line + '\n')
-        print(f"\n[+] C2 URLs saved to: {output_file}")
+        if print_console:
+            print(f"\n[+] C2 URLs saved to: {output_file}")
+        else:
+            print(f"\n[*] Total: {len(results)} C2(s). C2 URLs saved to: {output_file}")
+    elif file_written_incrementally:
+        print(f"\n[*] Total: {len(results)} C2(s). C2 URLs saved to: {file_written_incrementally}")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -375,6 +476,10 @@ Examples:
   Additional options:
     python clickfix_extractor.py -d example.com --no-defang
     python clickfix_extractor.py -l domains.txt -o results.txt --unique -v
+    python clickfix_extractor.py -l domains.txt --c2only
+    python clickfix_extractor.py -l domains.txt -o c2_only.txt --c2only
+    python clickfix_extractor.py -l domains.txt -o c2_source.txt --c2only-source
+    python clickfix_extractor.py -l domains.txt -o c2_source.txt --c2only-source --unique
 
 Detection patterns:
   - msiexec /i https://...  (MSIEXEC external URL)
@@ -417,25 +522,53 @@ Detection patterns:
                        default=30,
                        help='Request timeout in seconds (default: 30)')
     
+    parser.add_argument('--c2only',
+                       action='store_true',
+                       help='File mode only: print or write only entries where C2 was found; suppress no C2 found lines')
+    
+    parser.add_argument('--c2only-source',
+                       action='store_true',
+                       help='File mode only: like --c2only but output includes source URL, command, and C2; works with --unique')
+    
     args = parser.parse_args()
     
     print("[*] ClickFix C2 Extractor")
     print("[*] Searching for MSHTA/MSIEXEC/PowerShell C2 indicators\n")
     
     results = []
+    defang = not args.no_defang
+    show_commands = not args.no_commands
     
     if args.domain:
         results = process_single_target(args.domain, verbose=args.verbose)
+        output_results(
+            results,
+            unique=args.unique,
+            output_file=args.output,
+            defang=defang,
+            show_commands=show_commands,
+            print_console=True
+        )
     elif args.list:
-        results = process_file(args.list, verbose=args.verbose)
-    
-    output_results(
-        results,
-        unique=args.unique,
-        output_file=args.output,
-        defang=not args.no_defang,
-        show_commands=not args.no_commands
-    )
+        results = process_file(
+            args.list,
+            verbose=args.verbose,
+            defang=defang,
+            show_commands=show_commands,
+            c2only=args.c2only,
+            c2only_source=args.c2only_source,
+            output_file=args.output,
+            unique=args.unique
+        )
+        output_results(
+            results,
+            unique=args.unique,
+            output_file=args.output,
+            defang=defang,
+            show_commands=show_commands,
+            print_console=False,
+            file_written_incrementally=args.output
+        )
 
 if __name__ == "__main__":
     main()
